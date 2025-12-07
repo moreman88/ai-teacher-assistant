@@ -1,0 +1,138 @@
+// Prisma schema for AI Teacher Assistant
+// Supports SQLite (local) and PostgreSQL (Render)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum Role {
+  ADMIN
+  TEACHER
+}
+
+enum Subject {
+  SEWING        // Швейное дело
+  HAIRDRESSING  // Парикмахерское искусство
+  OFFICE_WORK   // Делопроизводство
+  SHOEMAKING    // Обувное дело
+  ELECTRONICS   // Ремонт аппаратуры
+}
+
+enum Difficulty {
+  BASIC    // Базовый
+  MEDIUM   // Средний
+  ADVANCED // Продвинутый
+}
+
+// ==================== MODELS ====================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  role         Role     @default(TEACHER)
+  subject      Subject?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  tasks      Task[]
+  groups     StudentGroup[]
+  aiHistory  AIHistory[]
+}
+
+model Task {
+  id              String     @id @default(uuid())
+  teacherId       String
+  teacher         User       @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  
+  title           String
+  subject         Subject
+  topic           String
+  difficultyLevel Difficulty
+  description     String
+  criteria        Json       // Array of grading criteria
+  
+  aiGenerated     Boolean    @default(false)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  // Relations
+  assessments Assessment[]
+
+  @@index([teacherId])
+  @@index([subject])
+}
+
+model StudentGroup {
+  id        String   @id @default(uuid())
+  teacherId String
+  teacher   User     @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  
+  name      String   // e.g., "Швея-2023"
+  subject   Subject
+  year      Int      @default(2024)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  students Student[]
+
+  @@index([teacherId])
+}
+
+model Student {
+  id        String       @id @default(uuid())
+  groupId   String
+  group     StudentGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  fullName  String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  // Relations
+  assessments Assessment[]
+
+  @@index([groupId])
+}
+
+model Assessment {
+  id          String   @id @default(uuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  
+  scores      Json     // { "criterion1": 5, "criterion2": 4, ... }
+  totalScore  Int
+  maxScore    Int      @default(100)
+  comments    String?
+  submittedAt DateTime @default(now())
+
+  @@unique([taskId, studentId])
+  @@index([taskId])
+  @@index([studentId])
+}
+
+model AIHistory {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  prompt     String
+  response   String
+  aiModel    String   // "claude" or "gpt-3.5"
+  tokensUsed Int
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
