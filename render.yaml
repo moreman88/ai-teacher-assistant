@@ -1,0 +1,54 @@
+# Render Blueprint - автоматический деплой
+# Документация: https://render.com/docs/blueprint-spec
+
+services:
+  # Backend API
+  - type: web
+    name: ai-teacher-backend
+    runtime: node
+    region: frankfurt
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run db:generate && npm run db:push
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-teacher-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+
+staticSites:
+  # Frontend Static Site
+  - name: ai-teacher-frontend
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: public, max-age=31536000
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+
+databases:
+  - name: ai-teacher-db
+    region: frankfurt
+    plan: free
+    databaseName: ai_teacher
+    user: ai_teacher_user
