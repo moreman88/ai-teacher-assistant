@@ -13,24 +13,31 @@ const adminRoutes = require('./routes/admin');
 
 const app = express();
 
+// Trust proxy (required for Render and other cloud platforms)
+app.set('trust proxy', 1);
+
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: [
+    process.env.FRONTEND_URL,
+    'http://localhost:5173',
+    'https://ai-teacher-frontend-ysh4.onrender.com'
+  ].filter(Boolean),
   credentials: true
 }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100
 });
 app.use('/api/', limiter);
 
-// AI rate limiting (stricter for AI endpoints)
+// AI rate limiting
 const aiLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 50 // 50 AI requests per hour
+  windowMs: 60 * 60 * 1000,
+  max: 50
 });
 app.use('/api/ai/', aiLimiter);
 
