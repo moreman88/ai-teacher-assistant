@@ -14,14 +14,14 @@ const getGroqClient = () => {
 };
 
 // Track daily usage
-let claudeUsageToday = 0;
+let usageToday = 0;
 let lastResetDate = new Date().toDateString();
-const CLAUDE_DAILY_LIMIT = 45;
+const DAILY_LIMIT = 1000;
 
 const checkAndResetUsage = () => {
   const today = new Date().toDateString();
   if (today !== lastResetDate) {
-    claudeUsageToday = 0;
+    usageToday = 0;
     lastResetDate = today;
   }
 };
@@ -40,14 +40,9 @@ const generateTask = async ({ subject, topic, difficulty, language = 'ru' }) => 
   const prompt = createTaskPrompt(subjectInfo, topic, difficultyInfo, language);
 
   if (process.env.GROQ_API_KEY) {
-    try {
-      const result = await generateWithGroq(prompt);
-      claudeUsageToday++;
-      return { ...result, model: 'groq-llama' };
-    } catch (error) {
-      console.error('Groq error:', error.message);
-      throw new Error('Ошибка генерации: ' + error.message);
-    }
+    const result = await generateWithGroq(prompt);
+    usageToday++;
+    return { ...result, model: 'groq-llama' };
   }
 
   throw new Error('Нет доступных AI провайдеров. Добавьте GROQ_API_KEY.');
@@ -67,25 +62,10 @@ const createTaskPrompt = (subjectInfo, topic, difficultyInfo, language) => {
 
 ${langInstruction}
 
-Создай задание в формате JSON:
-{
-  "title": "Название задания",
-  "description": "Подробное описание задания (минимум 3 абзаца)",
-  "objectives": ["Цель 1", "Цель 2", "Цель 3"],
-  "materials": ["Материал/инструмент 1", "Материал 2"],
-  "steps": ["Шаг 1", "Шаг 2", "Шаг 3"],
-  "criteria": [
-    {"name": "Критерий 1", "maxScore": 20, "description": "Описание"},
-    {"name": "Критерий 2", "maxScore": 20, "description": "Описание"},
-    {"name": "Критерий 3", "maxScore": 20, "description": "Описание"},
-    {"name": "Критерий 4", "maxScore": 20, "description": "Описание"},
-    {"name": "Критерий 5", "maxScore": 20, "description": "Описание"}
-  ],
-  "timeLimit": "Рекомендуемое время выполнения",
-  "safetyNotes": "Правила техники безопасности"
-}
+Ответь ТОЛЬКО валидным JSON без markdown, без комментариев:
+{"title":"Название задания","description":"Подробное описание задания","objectives":["Цель 1","Цель 2","Цель 3"],"materials":["Материал 1","Материал 2"],"steps":["Шаг 1","Шаг 2","Шаг 3"],"criteria":[{"name":"Критерий 1","maxScore":20,"description":"Описание"},{"name":"Критерий 2","maxScore":20,"description":"Описание"},{"name":"Критерий 3","maxScore":20,"description":"Описание"},{"name":"Критерий 4","maxScore":20,"description":"Описание"},{"name":"Критерий 5","maxScore":20,"description":"Описание"}],"timeLimit":"60 минут","safetyNotes":"Правила безопасности"}
 
-ВАЖНО: Критерии должны в сумме давать 100 баллов.`;
+ВАЖНО: Критерии должны в сумме давать 100 баллов. Только JSON, без лишнего текста.`;
 };
 
 const generateWithGroq = async (prompt) => {
@@ -106,26 +86,35 @@ const generateWithGroq = async (prompt) => {
     throw new Error('Не удалось извлечь JSON из ответа');
   }
 
-  return {
-    task: JSON.parse(jsonMatch[0]),
-    tokensUsed: response.usage?.total_tokens || 0
-  };
+  let cleanJson = jsonMatch[0]
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    .replace(/\n/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/\t/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  try {
+    return {
+      task: JSON.parse(cleanJson),
+      tokensUsed: response.usage?.total_tokens || 0
+    };
+  } catch (parseError) {
+    console.error('JSON parse error:', parseError.message);
+    console.error('Raw text:', text.substring(0, 500));
+    throw new Error('Ошибка разбора ответа ИИ. Попробуйте ещё раз.');
+  }
 };
 
+// Evaluate student work
 const evaluateWork = async ({ taskDescription, criteria, studentWork, language = 'ru' }) => {
   checkAndResetUsage();
 
   const prompt = createEvaluationPrompt(taskDescription, criteria, studentWork, language);
 
   if (process.env.GROQ_API_KEY) {
-    try {
-      const result = await evaluateWithGroq(prompt);
-      claudeUsageToday++;
-      return { ...result, model: 'groq-llama' };
-    } catch (error) {
-      console.error('Groq error:', error.message);
-      throw new Error('Ошибка оценивания: ' + error.message);
-    }
+    const result = await evaluateWithGroq(prompt);
+    usageToday++;
+    return { ...result, model: 'groq-llama' };
   }
 
   throw new Error('Нет доступных AI провайдеров');
@@ -138,25 +127,16 @@ const createEvaluationPrompt = (taskDescription, criteria, studentWork, language
 
   return `Ты - опытный преподаватель колледжа. Оцени работу студента.
 
-ЗАДАНИЕ:
-${taskDescription}
+ЗАДАНИЕ: ${taskDescription}
 
-КРИТЕРИИ ОЦЕНИВАНИЯ:
-${JSON.stringify(criteria, null, 2)}
+КРИТЕРИИ: ${JSON.stringify(criteria)}
 
-РАБОТА СТУДЕНТА:
-${studentWork}
+РАБОТА СТУДЕНТА: ${studentWork}
 
 ${langInstruction}
 
-Оцени работу в формате JSON:
-{
-  "scores": {"Критерий 1": оценка, "Критерий 2": оценка},
-  "totalScore": общий_балл,
-  "feedback": "Развёрнутый комментарий к работе",
-  "strengths": ["Сильная сторона 1", "Сильная сторона 2"],
-  "improvements": ["Что улучшить 1", "Что улучшить 2"]
-}`;
+Ответь ТОЛЬКО валидным JSON:
+{"scores":{"Критерий 1":15,"Критерий 2":18},"totalScore":85,"feedback":"Комментарий","strengths":["Плюс 1","Плюс 2"],"improvements":["Улучшить 1","Улучшить 2"]}`;
 };
 
 const evaluateWithGroq = async (prompt) => {
@@ -177,19 +157,31 @@ const evaluateWithGroq = async (prompt) => {
     throw new Error('Не удалось извлечь JSON из ответа');
   }
 
-  return {
-    evaluation: JSON.parse(jsonMatch[0]),
-    tokensUsed: response.usage?.total_tokens || 0,
-    model: 'groq-llama'
-  };
+  let cleanJson = jsonMatch[0]
+    .replace(/[\x00-\x1F\x7F]/g, ' ')
+    .replace(/\n/g, ' ')
+    .replace(/\r/g, '')
+    .replace(/\t/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  try {
+    return {
+      evaluation: JSON.parse(cleanJson),
+      tokensUsed: response.usage?.total_tokens || 0,
+      model: 'groq-llama'
+    };
+  } catch (parseError) {
+    console.error('JSON parse error:', parseError.message);
+    throw new Error('Ошибка разбора ответа ИИ. Попробуйте ещё раз.');
+  }
 };
 
 const getUsageStats = () => {
   checkAndResetUsage();
   return {
-    claudeUsedToday: claudeUsageToday,
-    claudeRemainingToday: CLAUDE_DAILY_LIMIT - claudeUsageToday,
-    claudeDailyLimit: CLAUDE_DAILY_LIMIT
+    usedToday: usageToday,
+    remainingToday: DAILY_LIMIT - usageToday,
+    dailyLimit: DAILY_LIMIT
   };
 };
 
